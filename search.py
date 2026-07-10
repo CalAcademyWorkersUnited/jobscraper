@@ -112,27 +112,33 @@ def export_csv(bucket: str, prefix: str, output_path: str):
 
     # Maps job_id -> (updated_at, row) so we keep the most recently updated version
     jobs_by_id = {}
-    # Maps job_id -> last file timestamp where the job was seen
-    last_seen_file_ts: Dict[int, datetime] = {}
-    # All file timestamps encountered, for computing date_removed
-    all_file_ts = []
+    # Maps job_id -> (last file timestamp, is_internal) where the job was seen
+    last_seen_file_ts: Dict[int, tuple] = {}
+    # File timestamps by type
+    external_file_ts = []
+    internal_file_ts = []
 
     for label, content in iter_json_files():
         file_ts = _parse_file_ts(label)
+        is_internal = 'internal' in label.lower()
         if file_ts:
-            all_file_ts.append(file_ts)
+            if is_internal:
+                internal_file_ts.append(file_ts)
+            else:
+                external_file_ts.append(file_ts)
 
         try:
             data = json.loads(content)
-            is_internal = 'internal' in label.lower()
 
             for job in get_jobs(data):
                 job_id = job.get('id')
                 if job_id is None:
                     continue
 
-                if file_ts and (job_id not in last_seen_file_ts or file_ts > last_seen_file_ts[job_id]):
-                    last_seen_file_ts[job_id] = file_ts
+                if file_ts:
+                    existing_entry = last_seen_file_ts.get(job_id)
+                    if not existing_entry or file_ts > existing_entry[0]:
+                        last_seen_file_ts[job_id] = (file_ts, is_internal)
 
                 updated_at_str = job.get('updated_at', '')
                 try:
@@ -175,14 +181,23 @@ def export_csv(bucket: str, prefix: str, output_path: str):
             print(f"✗ ERROR: Invalid JSON in {label}", file=sys.stderr)
 
     # Determine date_removed: first file timestamp after a job's last appearance
-    if all_file_ts:
-        sorted_file_ts = sorted(set(all_file_ts))
-        for job_id, (_, row) in jobs_by_id.items():
-            last_seen = last_seen_file_ts.get(job_id)
-            if last_seen:
-                later = [ts for ts in sorted_file_ts if ts > last_seen]
-                if later:
-                    row['date_removed'] = later[0].strftime('%Y-%m-%dT%H:%M:%S')
+    # Only set if the job is NOT in the most recent file of its type (internal/external)
+    most_recent_external = max(external_file_ts) if external_file_ts else None
+    most_recent_internal = max(internal_file_ts) if internal_file_ts else None
+
+    for job_id, (_, row) in jobs_by_id.items():
+        entry = last_seen_file_ts.get(job_id)
+        if not entry:
+            continue
+        last_seen_ts, job_is_internal = entry
+        most_recent = most_recent_internal if job_is_internal else most_recent_external
+
+        if most_recent and last_seen_ts < most_recent:
+            # Job not in most recent file of its type — find first timestamp after it disappeared
+            timeline = sorted(set(internal_file_ts if job_is_internal else external_file_ts))
+            later = [ts for ts in timeline if ts > last_seen_ts]
+            if later:
+                row['date_removed'] = later[0].strftime('%Y-%m-%dT%H:%M:%S')
 
     rows = [row for _, row in jobs_by_id.values()]
 
