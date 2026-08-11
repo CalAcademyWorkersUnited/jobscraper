@@ -159,6 +159,7 @@ def export_csv(bucket: str, prefix: str, output_path: str):
                     if newer:
                         existing_row.update(pay_fields)
                         existing_row['is_internal'] = is_internal
+                        existing_row['last_updated'] = updated_at_str
                         jobs_by_id[job_id] = (updated_at, existing_row)
                     else:
                         # Not newer — still update pay if the new data is more complete
