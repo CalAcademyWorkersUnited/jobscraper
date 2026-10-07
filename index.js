@@ -124,11 +124,15 @@ async function getInternalJobs (isString = true) {
             while (i--) {
                 let details = await getInternalJobDetails(jobsData[i]);
 
-                // append inferred pay range
-                const obj = await inferCompensationRange(details.content);
-                details.pay_ranges_inferred = [ obj ];
+                if (details) {
+                    // append inferred pay range
+                    const obj = await inferCompensationRange(details.content);
+                    details.pay_ranges_inferred = [ obj ];
+                } else {
+                    console.error('Failed to fetch internal job details for', jobsData[i].absolute_url);
+                }
 
-                jobsData[i].details = details;
+                jobsData[i].details = details || null;
             }
 
             if (isString) {
@@ -164,6 +168,6 @@ async function start (event, context) {
 if (process.env.AWS_EXECUTION_ENV) {
     exports.handler = start;
 } else {
-    let data = JSON.parse(process.argv[2] || '{"type": "external", "isString": false}');
+    let data = JSON.parse(process.argv[2] || '{"type": "internal", "isString": false}');
 	start(data);
 }
